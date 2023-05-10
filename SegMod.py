@@ -21,7 +21,7 @@ for filename in os.listdir(directory):
     f = os.path.join(directory,filename)
     img = Image.open(f)
     gray = color.rgb2gray(img)
-
+    print(filename)
     # Apply thresholding to convert the image to binary
     thresh = filters.threshold_otsu(gray)
     binary = gray <= thresh
