@@ -1,1 +1,153 @@
+import os
+import statistics
+import cv2
+from ultralytics import YOLO
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+from scipy import ndimage as ndi
 
+from skimage import color, filters
+from skimage.filters import rank
+from skimage.morphology import disk
+
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
+from skimage.util import img_as_ubyte
+
+def box_l(image,box,n,ep,color=(128,128,128)):
+        lw = max(round(sum(image.shape) / 2 * 0.003), 2)
+        p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+        #with open('ImagesPointsA.txt', 'a') as f:
+        #    f.write(str(n)+ ","+str(box[0])+','+str(box[1])+','+str(box[2])+','+str(box[3])+'\n')
+        crop_i = image[int(box[1]):int(box[3]), int(box[0]):int(box[2])]
+        crop_i = cv2.cvtColor(crop_i, cv2.COLOR_BGR2RGB)
+        file_name = "ImagesF" + str(ep) + "/CropIm" + str(n) +"_"+ str(box[0])+ '.jpg'
+        cv2.imwrite(file_name, crop_i)
+        cv2.waitKey(0)
+        cv2.rectangle(image, p1, p2, color, thickness=lw, lineType=cv2.LINE_AA)
+        return int(box[0]), int(box[1]), int(box[2]), int(box[3]), file_name
+
+def BBmetrics(a,b,c,d,m,n,o,p):
+    xA = max(a, m)
+    yA = max(b, n)
+    xB = min(c, o)
+    yB = min(d, p)
+    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+    boxAArea = (c - a + 1) * (d - b + 1)
+    boxBArea = (o - m + 1) * (p - n + 1)
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+    dice = (2*interArea) / float(boxAArea+boxBArea)
+    return iou,dice
+
+def saveInFinal(a):
+    with open('FinalMetric.txt', 'a') as f:
+        f.write(a)
+        
+ep = [300]
+for yan in range(1,11):
+    FilIname = [[],[],[],[],[],[],[],[],[],[],[]]
+    for e in ep:
+        print("----" + str(e) + "----")
+        model = YOLO("yolov8n.pt")
+        model.train(data=".../data" + str(yan) +".yaml", epochs=int(e))
+        metrics = model.val()  # evaluate model performance on the validation set
+        directory = '.../test' + str(yan) +'/images'
+        dic2 = '.../test' + str(yan) +'/labels'
+        num = 0
+        noFound = 0
+        IOULi = []
+        DICELi = []
+        for filename in os.listdir(directory):
+            f = os.path.join(directory,filename)
+            im = Image.open(f)
+            im = np.asarray(im)
+            res = model(im)
+            res = list(res)[0]
+            # YOLOplot(im, res.boxes.boxes,num)
+            aux1 = []
+            aux2 = []
+            boxn = len(res.boxes.boxes)
+            print("LEN:  " + str(boxn))
+            if boxn == 0:
+                noFound= noFound + 1
+            for box in res.boxes.boxes:
+                if float(box[-2]) >= 0.75:
+                    x1,y1,x2,y2,nom = box_l(im, box,num,yan)
+                    for filename2 in os.listdir(dic2):
+                        if filename[:-4] in filename2:
+                            with open(os.path.join(dic2, filename2), 'r') as f:
+                                a = f.readlines()
+                                for line in a:
+                                    a1 = line.split()
+                                    w, h = im.shape[1], im.shape[0]
+                                    x = float(a1[1]) * w
+                                    y = float(a1[2]) * h
+                                    w1 = float(a1[3]) * w
+                                    h1 = float(a1[4]) * h
+                                    #p1, p2 = (int(x + w1 / 2), int(y - h1 / 2)), (int(x - w1 / 2), int(y + h1 / 2))
+                                    g, k = BBmetrics(x1, y1, x2, y2, int(x - w1 / 2), int(y - h1 / 2), int(x + w1 / 2),int(y + h1 / 2))
+                                    aux1.append(g)
+                                    aux2.append(k)
+                                    print(filename2)
+                                    print(str(x1) + " " + str(y1) + " " + str(x2) + " " + str(y2))
+                                    print(str(x - w1 / 2) + " " + str(y - h1 / 2)+ " " +str(x + w1 / 2)+ " " + str(y + h1 / 2))
+                                    print("IOU ----------------------------------------")
+                                    print(g)
+                                    print(k)
+            aux2.sort(reverse=True)
+            print(aux2)
+            print(aux2[:boxn])
+            aux1.sort(reverse=True)
+            print(aux1)
+            print(aux1[:boxn])
+            IOULi = IOULi + aux1[:boxn]
+            DICELi = DICELi + aux2[:boxn]
+                        #cv2.rectangle(im, p1, p2, (128, 128, 128), lineType=cv2.LINE_AA)
+                        #image = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+                        #cv2.imshow('img', image)
+                        #cv2.waitKey(0)
+
+            image = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+            #cv2.imwrite("ResultsT"+str(e)+"/result" + str(num) + '.jpg', image)
+            #cv2.waitKey(0)
+            num+=1
+        print(IOULi)
+        print(DICELi)
+        print(statistics.mean(IOULi))
+        print(statistics.mean(DICELi))
+        saveInFinal(str(yan) + ": IoU: " + str(statistics.mean(IOULi)) + ",DICE: " + str(statistics.mean(DICELi)) + ',NF: ' + str(noFound) + '\n')
+        
+directory = '.../Crop'
+num = 0
+for filename in os.listdir(directory):
+    f = os.path.join(directory,filename)
+    img = Image.open(f)
+    gray = color.rgb2gray(img)
+    print(filename)
+    # Apply thresholding to convert the image to binary
+    thresh = filters.threshold_otsu(gray)
+    binary = gray <= thresh
+
+    distance = ndi.distance_transform_edt(binary)
+    coords = peak_local_max(distance, footprint=np.ones((3, 3)), labels=binary)
+    mask = np.zeros(distance.shape, dtype=bool)
+    mask[tuple(coords.T)] = True
+    markers, _ = ndi.label(mask)
+    labels = watershed(-distance, markers, mask=binary)
+
+    fig, axes = plt.subplots(ncols=3, figsize=(9, 3), sharex=True, sharey=True)
+    ax = axes.ravel()
+
+    ax[0].imshow(binary, cmap=plt.cm.gray)
+    ax[0].set_title('Overlapping objects')
+    ax[1].imshow(-distance, cmap=plt.cm.gray)
+    ax[1].set_title('Distances')
+    ax[2].imshow(labels, cmap=plt.cm.nipy_spectral)
+    ax[2].set_title('Separated objects')
+
+    for a in ax:
+        a.set_axis_off()
+
+    fig.tight_layout()
+    plt.show()       
